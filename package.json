@@ -1,0 +1,74 @@
+{
+  "name": "Vega-Next",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "electron.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:start": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "electron:dev": "concurrently \"npm run dev\" \"npm run electron:start\"",
+    "electron:build": "npm run build && electron-builder",
+    "lint": "eslint ."
+  },
+  "build": {
+    "appId": "com.vega.next.app",
+    "productName": "Vega-Next",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "artifactName": "Vega-Next-win.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "@gmanole01/wcjs-prebuilt": "^1.0.1",
+    "@tanstack/react-query": "^5.96.1",
+    "axios": "^1.14.0",
+    "cheerio": "^1.2.0",
+    "discord-rpc": "^4.0.1",
+    "hls.js": "^1.6.15",
+    "lucide-react": "^1.7.0",
+    "pako": "^2.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-loading-skeleton": "^3.5.0",
+    "react-native-web": "^0.21.2",
+    "react-native-web-linear-gradient": "^1.1.2",
+    "react-router-dom": "^7.14.0",
+    "video.js": "^8.23.7",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^41.1.1",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "vite": "^8.0.1",
+    "wait-on": "^9.0.4"
+  }
+}
