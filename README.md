@@ -1,7 +1,4 @@
 📖 Vega‑Next Desktop –
-Below you'll find a production‑ready README.md file for the Vega-Next-desktop repository. It includes SEO‑optimised sections, clear installation instructions, and a full project overview. After the README, I've added a step‑by‑step guide on how to push your code to GitHub.
-
-📄 README.md (Copy & Paste into your repository root)
 markdown
 # 🎬 Vega‑Next Desktop
 
