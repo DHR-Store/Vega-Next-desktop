@@ -96,6 +96,8 @@ Run in Electron with hot‑reload
 
 bash
 npm run electron:dev
+or use 
+./node_modules/.bin/electron .
 This concurrently starts the Vite server and launches an Electron window. Changes to the source will reload the app automatically.
 
 Building for Production
@@ -106,7 +108,7 @@ npm run build
 Output is in the dist/ folder.
 
 Electron distributable (Windows NSIS installer)
-
+./node_modules/.bin/electron .
 bash
 npm run electron:build
 The packaged app will be placed in the release/ directory.

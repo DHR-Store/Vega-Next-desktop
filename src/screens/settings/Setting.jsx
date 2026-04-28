@@ -466,7 +466,19 @@ const Settings = ({ onNavigate, currentTab }) => {
                 </div>
               </div>
               <label style={styles.switch} className="v-switch">
-                <input type="checkbox" checked={networkProxyMode} onChange={toggleNetworkProxy} />
+                <input type="checkbox" checked={networkProxyMode} onChange={(e) => {
+  const val = e.target.checked;
+  setDiscordEnabled(val);
+  storage.set('discordRpcEnabled', val);
+  
+  if (val) {
+    DiscordRPC.connect();
+    showToast('Discord RPC Enabled');
+  } else {
+    DiscordRPC.disconnect();
+    showToast('Discord RPC Disabled');
+  }
+}} />
                 <span className="v-slider" />
               </label>
             </div>

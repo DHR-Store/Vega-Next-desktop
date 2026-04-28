@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification } from "electron";
+import { app, BrowserWindow, ipcMain, Notification, session } from "electron";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -8,12 +8,31 @@ import util from "util";
 import axios from "axios";
 import { EventEmitter } from "events";
 
+// ==================== GLOBAL FIXES ====================
+app.commandLine.appendSwitch('ignore-certificate-errors');
+app.userAgentFallback = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+  event.preventDefault();
+  callback(true);
+});
+
 const execPromise = util.promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow;
 let activePlayerProcess = null;
+
+// ==================== GLOBAL REFERER + AUTO-REFERER SYSTEM ====================
+let globalReferer = null;
+let globalOrigin = null;
+let refererSequence = 0;
+let activeRefererToken = 0;
+
+// Auto-referer mode: when active, every request gets a Referer equal to its own URL
+let autoRefererActive = false;
+let autoRefererToken = 0;
+// ============================================================================
 
 // ==================== DOWNLOAD MANAGER ====================
 const activeDownloads = new Map();
@@ -209,10 +228,26 @@ async function downloadNormal(url, outputPath, jobId, headers = {}, startByte = 
   const controller     = new AbortController();
   const requestHeaders = { ...headers };
   if (startByte > 0) requestHeaders['Range'] = `bytes=${startByte}-`;
-  const response = await axios({
-    method: 'GET', url, headers: requestHeaders,
-    responseType: 'stream', signal: controller.signal,
-  });
+  
+  let response;
+  try {
+    response = await axios({
+      method: 'GET', url, headers: requestHeaders,
+      responseType: 'stream', signal: controller.signal,
+    });
+  } catch (err) {
+    const meta = loadDownloadsMetadata();
+    if (meta[jobId]) {
+      meta[jobId].status = 'error';
+      saveDownloadsMetadata(meta);
+    }
+    sendDownloadNotification(jobId, { title, status: 'error' });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download:error', { jobId, error: err.message });
+    }
+    throw err;
+  }
+
   const contentLength = parseInt(response.headers['content-length'] || '0', 10);
   const totalBytes    = contentLength > 0 ? startByte + contentLength : 0;
   const fileStream = fs.createWriteStream(outputPath, { flags: startByte > 0 ? 'a' : 'w' });
@@ -220,6 +255,7 @@ async function downloadNormal(url, outputPath, jobId, headers = {}, startByte = 
   const emitter = new EventEmitter();
   activeDownloads.set(jobId, { controller, fileStream, info: { url, outputPath, type: 'normal', headers, startByte }, emitter });
   sendDownloadNotification(jobId, { title, status: 'started' });
+  
   let downloadedBytes = startByte;
   response.data.on('data', (chunk) => {
     downloadedBytes += chunk.length;
@@ -234,6 +270,7 @@ async function downloadNormal(url, outputPath, jobId, headers = {}, startByte = 
     }
     sendProgressToRenderer(jobId, percent, downloadedBytes, totalBytes);
   });
+  
   return new Promise((resolve, reject) => {
     fileStream.on('finish', () => {
       activeDownloads.delete(jobId);
@@ -251,6 +288,7 @@ async function downloadNormal(url, outputPath, jobId, headers = {}, startByte = 
         mainWindow.webContents.send('download:complete', { jobId, outputPath });
       resolve();
     });
+    
     fileStream.on('error', (err) => {
       activeDownloads.delete(jobId);
       lastProgressSend.delete(jobId);
@@ -263,6 +301,7 @@ async function downloadNormal(url, outputPath, jobId, headers = {}, startByte = 
         mainWindow.webContents.send('download:error', { jobId, error: err.message });
       reject(err);
     });
+    
     response.data.on('error', (err) => {
       sendDownloadNotification(jobId, { title, status: 'error' });
       reject(err);
@@ -353,9 +392,144 @@ app.whenReady().then(async () => {
   createWindow();
   const externalPlayers = await detectExternalPlayers();
 
+  // ==================== WEB REQUEST HANDLER ====================
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['*://*/*'] },
+    (details, callback) => {
+      // If auto-referer mode is active, make every request refer to itself
+      if (autoRefererActive) {
+        console.log('[auto-referer] Self-referer for:', details.url);
+        details.requestHeaders['Referer'] = details.url;
+        try {
+          details.requestHeaders['Origin'] = new URL(details.url).origin;
+        } catch (_) {}
+        callback({ requestHeaders: details.requestHeaders });
+        return;
+      }
+
+      // Otherwise use the global referer/origin if set
+      if (globalReferer || globalOrigin) {
+        console.log('[onBeforeSendHeaders] URL:', details.url);
+        if (globalReferer) {
+          console.log('   -> Injecting Referer:', globalReferer);
+          details.requestHeaders['Referer'] = globalReferer;
+        }
+        if (globalOrigin) {
+          console.log('   -> Injecting Origin:', globalOrigin);
+          details.requestHeaders['Origin'] = globalOrigin;
+        }
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    }
+  );
+
+  // ==================== IPC: GLOBAL REFERER ====================
+  ipcMain.handle('set-global-referer', (event, referer) => {
+    refererSequence++;
+    globalReferer = referer;
+    try {
+      globalOrigin = new URL(referer).origin;
+    } catch {
+      globalOrigin = referer;
+    }
+    activeRefererToken = refererSequence;
+    console.log(`[IPC] Global referer set (token ${refererSequence}): ${referer}`);
+    return refererSequence;
+  });
+
+  ipcMain.handle('clear-global-referer', (event, token) => {
+    if (activeRefererToken === token) {
+      console.log(`[IPC] Global referer cleared (token ${token})`);
+      globalReferer = null;
+      globalOrigin = null;
+      activeRefererToken = 0;
+    } else {
+      console.log(`[IPC] Ignoring clear for stale token ${token} (active=${activeRefererToken})`);
+    }
+  });
+
+  // ==================== IPC: AUTO-REFERER ====================
+  ipcMain.handle('enable-auto-referer', () => {
+    if (!autoRefererActive) {
+      autoRefererActive = true;
+      autoRefererToken = Date.now();
+      console.log('[IPC] Auto-referer mode enabled');
+    }
+    return autoRefererToken;
+  });
+
+  ipcMain.handle('disable-auto-referer', (event, token) => {
+    if (autoRefererActive && token === autoRefererToken) {
+      autoRefererActive = false;
+      console.log('[IPC] Auto-referer mode disabled');
+    }
+  });
+  // ==============================================================
+
   ipcMain.on("launch-player", async (event, playerInfo, videoUrl) => { await launchPlayer(playerInfo, videoUrl); });
   ipcMain.handle("get-external-players", async () => externalPlayers);
 
+  // ==================== SEARCH INSTALLED APP HANDLER ====================
+  ipcMain.handle('search-system-app', async (event, query) => {
+    if (process.platform !== "win32") return null;
+    const searchName = query.toLowerCase().trim().replace(/\.exe$/i, '');
+    if (fs.existsSync(query) && query.toLowerCase().endsWith('.exe')) {
+      return { name: path.parse(query).name.toUpperCase(), path: query, type: 'custom' };
+    }
+    const regKey = `HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${searchName}.exe`;
+    try {
+      const { stdout } = await execPromise(`reg query "${regKey}" /ve`);
+      const match = stdout.match(/REG_(?:SZ|EXPAND_SZ)\s+(.*)/i);
+      if (match) {
+        const appPath = match[1].trim();
+        if (fs.existsSync(appPath)) {
+          return { name: path.parse(appPath).name.toUpperCase(), path: appPath, type: 'custom' };
+        }
+      }
+    } catch (e) { /* not found */ }
+    try {
+      const safeQuery = searchName.replace(/'/g, "''");
+      const psScript = [
+        `$ErrorActionPreference='SilentlyContinue'`,
+        `$search='${safeQuery}'`,
+        `$path1 = Join-Path $env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'`,
+        `$path2 = Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'`,
+        `$paths = @($path1, $path2)`,
+        `$lnk = Get-ChildItem -Path $paths -Recurse -Filter "*$search*.lnk" -ErrorAction SilentlyContinue | Select-Object -First 1`,
+        `if ($lnk) {`,
+        `  $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk.FullName).TargetPath`,
+        `  if ($target -match '\\.exe$') { Write-Output $target }`,
+        `}`
+      ].join('\n');
+      const base64Script = Buffer.from(psScript, 'utf16le').toString('base64');
+      const psExe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+      const { stdout } = await execPromise(`"${psExe}" -NoProfile -EncodedCommand ${base64Script}`);
+      const exePath = stdout.trim();
+      if (exePath && fs.existsSync(exePath) && exePath.toLowerCase().endsWith('.exe')) {
+        return { name: path.parse(exePath).name.toUpperCase(), path: exePath, type: 'custom' };
+      }
+    } catch (e) {
+      console.log('Start Menu search skipped:', e.message);
+    }
+    const fallbacks = [
+      `C:\\Program Files\\DAUM\\PotPlayer\\PotPlayer64.exe`,
+      `C:\\Program Files\\DAUM\\PotPlayer\\PotPlayer.exe`,
+      `C:\\Program Files (x86)\\DAUM\\PotPlayer\\PotPlayer.exe`,
+      `C:\\Program Files\\VideoLAN\\VLC\\vlc.exe`,
+      `C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe`,
+      `C:\\Program Files\\mpv\\mpv.exe`,
+      `C:\\Program Files\\MPC-HC\\mpc-hc64.exe`,
+      `C:\\Program Files (x86)\\MPC-HC\\mpc-hc.exe`,
+    ];
+    for (let p of fallbacks) {
+      if (p.toLowerCase().includes(searchName) && fs.existsSync(p)) {
+        return { name: path.parse(p).name.toUpperCase(), path: p, type: 'custom' };
+      }
+    }
+    return null;
+  });
+
+  // ==================== VEGA FOLDER & FILE IPC ====================
   ipcMain.handle('get-vega-folder', () => getVegaDownloadsFolder());
   ipcMain.handle('check-file-exists', async (event, fileName) => {
     const folder = getVegaDownloadsFolder();
@@ -377,6 +551,7 @@ app.whenReady().then(async () => {
     new Notification({ title, body, silent: false }).show();
   });
 
+  // ==================== DOWNLOAD IPC ====================
   ipcMain.handle("download:start", async (event, { url, fileName, fileType, title, headers }) => {
     const jobId      = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     const vegaFolder = getVegaDownloadsFolder();

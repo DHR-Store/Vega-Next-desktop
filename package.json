@@ -1,7 +1,9 @@
 {
   "name": "Vega-Next",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "description": "Vega-Next media streaming desktop app",
+  "author": "Boss",
   "type": "module",
   "main": "electron.js",
   "scripts": {
@@ -24,10 +26,19 @@
       "electron.js",
       "package.json"
     ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "**/*.dll",
+      "**/*.exe"
+    ],
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico",
-      "artifactName": "Vega-Next-win.${ext}"
+      "artifactName": "Vega-Next-${version}-Windows-${arch}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -38,7 +49,6 @@
     }
   },
   "dependencies": {
-    "@gmanole01/wcjs-prebuilt": "^1.0.1",
     "@tanstack/react-query": "^5.96.1",
     "axios": "^1.14.0",
     "cheerio": "^1.2.0",
@@ -62,8 +72,8 @@
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^41.1.1",
-    "electron-builder": "^26.8.1",
+    "electron": "^40.9.2",
+    "electron-builder": "^24.13.3",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",

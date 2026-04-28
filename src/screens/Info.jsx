@@ -105,11 +105,11 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
     </div>
   );
 
-  // Loading and error states (unchanged, but Nav will be shown at bottom too)
+  // Loading and error states
   if (!link) return (
     <div style={{ ...ROOT, alignItems:'center', justifyContent:'center' }}>
       <TitleBar />
-      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'12px' }}>
+      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'12px', paddingBottom: '90px' }}>
         <p style={{ color:'#6b7280' }}>No media link provided.</p>
         <button onClick={onBack} style={{ padding:'8px 20px', borderRadius:'8px', background:primaryColor, color:'#fff', fontWeight:700, border:'none', cursor:'pointer' }}>Go Back</button>
       </div>
@@ -124,13 +124,13 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
       <div style={{ flex:1, display:'flex', overflow:'hidden', minHeight:0 }}>
         <div style={{ width:'420px', flexShrink:0, overflowY:'auto' }}>
           <Sk w="100%" h={280} r={0} />
-          <div style={{ padding:'14px', display:'flex', flexDirection:'column', gap:'12px' }}>
+          <div style={{ padding:'14px 14px 100px', display:'flex', flexDirection:'column', gap:'12px' }}>
             <Sk w="55%" h={32} />
             <div style={{ display:'flex', gap:'7px' }}>{[70,70,90,80].map((w,i)=><Sk key={i} w={w} h={30} r={18} />)}</div>
             <Sk w="100%" h={72} />
           </div>
         </div>
-        <div style={{ flex:1, padding:'16px', display:'flex', flexDirection:'column', gap:'10px', borderLeft:'1px solid rgba(255,255,255,0.07)' }}>
+        <div style={{ flex:1, padding:'16px 16px 100px', display:'flex', flexDirection:'column', gap:'10px', borderLeft:'1px solid rgba(255,255,255,0.07)', overflowY:'auto' }}>
           <Sk w="100%" h={50} r={12} />
           {[1,2,3,4,5].map(i=><Sk key={i} w="100%" h={56} r={12} />)}
         </div>
@@ -142,7 +142,7 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
   if (error || !info) return (
     <div style={ROOT}>
       <TitleBar />
-      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', paddingBottom: '90px' }}>
         <div style={{ textAlign:'center', padding:'32px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:'16px', maxWidth:'300px' }}>
           <h2 style={{ color:'#ef4444', margin:'0 0 8px', fontSize:'17px' }}>Connection Failed</h2>
           <p style={{ color:'#6b7280', fontSize:'13px', margin:'0 0 20px' }}>{error?.message || 'Failed to fetch content details.'}</p>
@@ -170,7 +170,7 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
       <TitleBar />
 
       <div style={{ display:'flex', flex:1, overflow:'hidden', minHeight:0 }}>
-        {/* LEFT panel (unchanged) */}
+        {/* LEFT panel */}
         <div style={{ width:'420px', minWidth:'420px', maxWidth:'420px', flexShrink:0, overflowY:'auto', overflowX:'hidden', background:'#000', borderRight:'1px solid rgba(255,255,255,0.07)', display:'flex', flexDirection:'column' }}>
           {/* Hero backdrop */}
           <div style={{ position:'relative', width:'100%', height:'280px', flexShrink:0, overflow:'hidden', background:'#0d0d0d' }}>
@@ -238,7 +238,9 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
               <Toggle active={useExternalDownloader} onToggle={toggleDl} primaryColor={primaryColor} />
             </div>
           </div>
-          <div style={{ height:'8px', flexShrink:0 }} />
+          
+          {/* ✅ Spacer added here to lift content above the bottom Nav when fully scrolled */}
+          <div style={{ height:'100px', flexShrink:0 }} />
         </div>
 
         {/* RIGHT panel */}
@@ -253,6 +255,9 @@ export default function Info({ routeParams = {}, onBack, onNavigate, currentTab 
             onNavigate={onNavigate}
             primaryColor={primaryColor}
           />
+          
+          {/* ✅ Spacer added here to lift the SeasonList above the bottom Nav when fully scrolled */}
+          <div style={{ height:'100px', flexShrink:0 }} />
         </div>
       </div>
 

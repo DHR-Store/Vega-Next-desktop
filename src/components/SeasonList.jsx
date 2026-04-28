@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Play, MonitorPlay, Loader2, CheckCircle2, ChevronDown, ExternalLink, Download, Trash2 } from 'lucide-react';
+import { Play, MonitorPlay, Loader2, CheckCircle2, ChevronDown, ExternalLink, Download, Trash2, Search } from 'lucide-react';
 import { cacheStorage, settingsStorage } from '../lib/storage';
 import { providerManager } from '../lib/services/ProviderManager';
 import { useEpisodes } from '../lib/hooks/useEpisodes';
@@ -8,7 +8,6 @@ import useWatchHistoryStore from '../lib/zustand/watchHistoryStore';
 import useDownloadedStore from '../lib/zustand/downloadedStore';
 import DownloadBottomSheet from './DownloadBottomSheet';
 import { getLocalFilePath, ifExists } from '../lib/file/ifExists';
-import { cancelDownload } from '../lib/downloader';
 
 const { ipcRenderer } = window.require
   ? window.require('electron')
@@ -29,11 +28,7 @@ const getEpisodeTitle = (ep, idx) => {
   return ep.title || ep.name || ep.label || `Episode ${idx + 1}`;
 };
 
-/* ─── Circular Download Button (matches Image 1) ────────────────────── */
-/**
- * Shows a dashed ring when idle, and a solid sweeping arc when downloading.
- * Long-press (600 ms) or right-click calls onLongPress.
- */
+/* ─── Circular Download Button ──────────────────────────────────────── */
 const CircularDlBtn = ({ progress = 0, isDownloading = false, primaryColor = '#FF6B53', onPress, onLongPress }) => {
   const timerRef = useRef(null);
   const SIZE = 40;
@@ -45,7 +40,6 @@ const CircularDlBtn = ({ progress = 0, isDownloading = false, primaryColor = '#F
     e.preventDefault();
     timerRef.current = setTimeout(() => onLongPress?.(), 600);
   };
-  
   const clearLong = () => clearTimeout(timerRef.current);
 
   return (
@@ -59,118 +53,42 @@ const CircularDlBtn = ({ progress = 0, isDownloading = false, primaryColor = '#F
       onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
       title={isDownloading ? `${Math.round(progress)}% – Long press to cancel` : 'Download'}
       style={{
-        width: SIZE, 
-        height: SIZE, 
-        borderRadius: 10,
+        width: SIZE, height: SIZE, borderRadius: 10,
         background: isDownloading ? `${primaryColor}18` : 'rgba(255,255,255,0.07)',
-        border: 'none', 
-        cursor: 'pointer',
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        position: 'relative', 
-        flexShrink: 0,
-        transition: 'background 0.2s',
+        border: 'none', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        position: 'relative', flexShrink: 0, transition: 'background 0.2s',
       }}
     >
-      {/* Only render the SVG circles when downloading */}
       {isDownloading && (
-        <svg
-          width={SIZE} height={SIZE}
-          viewBox={`0 0 ${SIZE} ${SIZE}`}
-          style={{ position: 'absolute', inset: 0 }}
-        >
-          {/* Background track */}
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ position: 'absolute', inset: 0 }}>
+          <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2.5" />
           <circle
             cx={SIZE / 2} cy={SIZE / 2} r={R}
-            fill="none"
-            stroke="rgba(255,255,255,0.12)"
-            strokeWidth="2.5"
-          />
-          {/* Animated progress arc */}
-          <circle
-            cx={SIZE / 2} cy={SIZE / 2} r={R}
-            fill="none"
-            stroke={primaryColor}
-            strokeWidth="2.5"
-            strokeDasharray={C}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
+            fill="none" stroke={primaryColor} strokeWidth="2.5"
+            strokeDasharray={C} strokeDashoffset={offset} strokeLinecap="round"
             transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
             style={{ transition: 'stroke-dashoffset 0.35s ease' }}
           />
         </svg>
       )}
-      
-      {/* Centre icon */}
-      <Download
-        size={isDownloading ? 12 : 20}
-        color={primaryColor}
-        strokeWidth={2.5}
-        style={{ position: 'relative', zIndex: 1 }}
-      />
+      <Download size={isDownloading ? 12 : 20} color={primaryColor} strokeWidth={2.5} style={{ position: 'relative', zIndex: 1 }} />
     </button>
   );
 };
 
 /* ─── Cancel Popup ──────────────────────────────────────────────────── */
 const CancelPopup = ({ primaryColor, title, onCancel, onDismiss }) => (
-  <div
-    onClick={onDismiss}
-    style={{
-      position: 'fixed', inset: 0, zIndex: 3000,
-      background: 'rgba(0,0,0,0.72)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 20,
-    }}
-  >
-    <div
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        background: '#1c1c1e', borderRadius: 20, padding: '28px 20px',
-        width: '100%', maxWidth: 300,
-        boxShadow: '0 24px 64px rgba(0,0,0,0.85)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
-    >
-      {/* Icon */}
-      <div style={{
-        width: 52, height: 52, borderRadius: 14,
-        background: `${primaryColor}22`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        margin: '0 auto 16px',
-      }}>
+  <div onClick={onDismiss} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div onClick={(e) => e.stopPropagation()} style={{ background: '#1c1c1e', borderRadius: 20, padding: '28px 20px', width: '100%', maxWidth: 300, boxShadow: '0 24px 64px rgba(0,0,0,0.85)', border: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ width: 52, height: 52, borderRadius: 14, background: `${primaryColor}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
         <Download size={24} color={primaryColor} />
       </div>
-
-      <p style={{ color: '#fff', fontSize: 17, fontWeight: 700, margin: '0 0 8px', textAlign: 'center' }}>
-        Cancel Download?
-      </p>
-      <p style={{ color: '#9ca3af', fontSize: 13, margin: 0, textAlign: 'center', lineHeight: 1.5 }}>
-        "{title}" will be stopped and removed.
-      </p>
-
+      <p style={{ color: '#fff', fontSize: 17, fontWeight: 700, margin: '0 0 8px', textAlign: 'center' }}>Cancel Download?</p>
+      <p style={{ color: '#9ca3af', fontSize: 13, margin: 0, textAlign: 'center', lineHeight: 1.5 }}>"{title}" will be stopped and removed.</p>
       <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
-        <button
-          onClick={onDismiss}
-          style={{
-            flex: 1, padding: '12px 0', borderRadius: 12,
-            background: 'rgba(255,255,255,0.09)', border: 'none',
-            color: '#e5e7eb', fontSize: 14, fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          Continue
-        </button>
-        <button
-          onClick={onCancel}
-          style={{
-            flex: 1, padding: '12px 0', borderRadius: 12,
-            background: '#ef4444', border: 'none',
-            color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer',
-          }}
-        >
-          Cancel
-        </button>
+        <button onClick={onDismiss} style={{ flex: 1, padding: '12px 0', borderRadius: 12, background: 'rgba(255,255,255,0.09)', border: 'none', color: '#e5e7eb', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Continue</button>
+        <button onClick={onCancel} style={{ flex: 1, padding: '12px 0', borderRadius: 12, background: '#ef4444', border: 'none', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
       </div>
     </div>
   </div>
@@ -194,30 +112,23 @@ const SeasonList = ({
   const addItem = watchHistory?.addItem || (() => {});
   const { isDownloaded, markAsDownloaded, markAsDeleted } = useDownloadedStore();
 
-  /* ── Per-episode download tracking ─────────────────────────────────── */
-  // Shape: { [fileName]: { progress: 0-100, jobId: string|null, status: 'idle'|'downloading'|'completed'|'error' } }
   const [downloadMap, setDownloadMap] = useState({});
-  // Long-press cancel popup: { fileName, jobId, title } | null
   const [cancelPopup, setCancelPopup] = useState(null);
 
   const updateDownload = useCallback((fileName, patch) => {
     setDownloadMap((prev) => ({
       ...prev,
-      [fileName]: {
-        ...(prev[fileName] ?? { progress: 0, jobId: null, status: 'idle' }),
-        ...patch,
-      },
+      [fileName]: { ...(prev[fileName] ?? { progress: 0, jobId: null, status: 'idle' }), ...patch },
     }));
   }, []);
 
-  /* ── Season / episodes state ──────────────────────────────────────── */
   const [activeSeasonIndex, setActiveSeasonIndex] = useState(() => {
     try {
       const cached = cacheStorage.getString(`ActiveSeason${metaTitle + providerValue}`);
       if (cached) {
         const parsed = JSON.parse(cached);
         const idx = LinkList?.findIndex((l) => l.title === parsed.title);
-        if (idx !== -1 && idx !== undefined) return idx;
+        if (idx !== -1) return idx;
       }
     } catch (_) {}
     return 0;
@@ -225,15 +136,10 @@ const SeasonList = ({
 
   const activeSeason = LinkList?.[activeSeasonIndex] || LinkList?.[0] || {};
   const hasEpisodesLink = !!activeSeason?.episodesLink;
-  const effectiveEpisodesLink = hasEpisodesLink
-    ? activeSeason.episodesLink
-    : routeParams?.link || null;
-  const shouldFetch =
-    hasEpisodesLink || (routeParams?.link && !activeSeason.directLinks?.length);
+  const effectiveEpisodesLink = hasEpisodesLink ? activeSeason.episodesLink : routeParams?.link || null;
+  const shouldFetch = hasEpisodesLink || (routeParams?.link && !activeSeason.directLinks?.length);
 
-  const { data: fetchedEpisodes = [], isFetching: episodeFetching } = useEpisodes(
-    effectiveEpisodesLink, providerValue, shouldFetch
-  );
+  const { data: fetchedEpisodes = [], isFetching: episodeFetching } = useEpisodes(effectiveEpisodesLink, providerValue, shouldFetch);
 
   const [dropOpen, setDropOpen] = useState(false);
   const [showServerModal, setShowServerModal] = useState(false);
@@ -245,7 +151,53 @@ const SeasonList = ({
   const [showDownloadSheet, setShowDownloadSheet] = useState(false);
   const [selectedEpisode, setSelectedEpisode] = useState(null);
 
-  /* ── Load external players ──────────────────────────────────────────── */
+  /* ── External Player Search & Default ───────────────────────────── */
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [defaultExternalPlayer, setDefaultExternalPlayer] = useState(null);
+
+  // Load saved default player on component mount
+  useEffect(() => {
+    try {
+      const saved = settingsStorage.getString('defaultExternalPlayer');
+      if (saved) setDefaultExternalPlayer(JSON.parse(saved));
+      else setDefaultExternalPlayer(null);
+    } catch (_) {
+      setDefaultExternalPlayer(null);
+    }
+  }, []);
+
+  const handleSearch = useCallback(async (query) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      if (ipcRenderer.invoke) {
+        const result = await ipcRenderer.invoke('search-system-app', query);
+        setSearchResults(result ? [result] : []);
+      } else {
+        setSearchResults([]);
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  const handleSelectPlayer = (player) => {
+    setDefaultExternalPlayer(player);
+    settingsStorage.setString('defaultExternalPlayer', JSON.stringify(player));
+    setSearchQuery('');
+    setSearchResults([]);
+  };
+
+  /* ── Load external players (detected) ─────────────────────────────── */
   useEffect(() => {
     const loadPlayers = async () => {
       if (ipcRenderer.invoke) {
@@ -259,10 +211,8 @@ const SeasonList = ({
   /* ── Episode list derivation ──────────────────────────────────────── */
   const episodeList = useMemo(() => {
     if (shouldFetch && fetchedEpisodes?.length > 0) return fetchedEpisodes;
-    if (Array.isArray(activeSeason?.directLinks) && activeSeason.directLinks.length > 0)
-      return activeSeason.directLinks;
-    if (Array.isArray(activeSeason?.episodes) && activeSeason.episodes.length > 0)
-      return activeSeason.episodes;
+    if (Array.isArray(activeSeason?.directLinks) && activeSeason.directLinks.length > 0) return activeSeason.directLinks;
+    if (Array.isArray(activeSeason?.episodes) && activeSeason.episodes.length > 0) return activeSeason.episodes;
     if (activeSeason?.link || activeSeason?.url || activeSeason?.href) return [activeSeason];
     if (effectiveEpisodesLink && !episodeFetching && fetchedEpisodes?.length === 0) {
       console.warn(`[SeasonList] Falling back to single episode link: ${effectiveEpisodesLink}`);
@@ -281,9 +231,7 @@ const SeasonList = ({
     const checkDownloads = async () => {
       for (const ep of episodes) {
         const episodeTitle = getEpisodeTitle(ep, 0);
-        const fileName = (metaTitle + (activeSeason?.title || '') + episodeTitle).replace(
-          /[^a-zA-Z0-9]/g, '_'
-        );
+        const fileName = (metaTitle + (activeSeason?.title || '') + episodeTitle).replace(/[^a-zA-Z0-9]/g, '_');
         const exists = await ifExists(fileName);
         if (exists) markAsDownloaded(fileName);
       }
@@ -307,30 +255,12 @@ const SeasonList = ({
     setDropOpen(false);
     if (LinkList[idx]) {
       try {
-        cacheStorage.setString(
-          `ActiveSeason${metaTitle + providerValue}`,
-          JSON.stringify(LinkList[idx])
-        );
+        cacheStorage.setString(`ActiveSeason${metaTitle + providerValue}`, JSON.stringify(LinkList[idx]));
       } catch (_) {}
     }
   };
 
   /* ── External player flow ───────────────────────────────────────────── */
-  const handleExternalPlayer = async (epLink, streamType) => {
-    setIsLoadingStreams(true);
-    try {
-      const streams = await providerManager.getStream({ link: epLink, type: streamType, providerValue });
-      if (!streams || streams.length === 0) return alert('No stream available.');
-      setExternalPlayerStreams([...streams]);
-      setShowServerModal(true);
-    } catch (err) {
-      console.error('Stream fetch error:', err);
-      alert('Failed to extract streams.');
-    } finally {
-      setIsLoadingStreams(false);
-    }
-  };
-
   const launchWithPlayer = (player, streamUrl) => {
     setShowServerModal(false);
     if (ipcRenderer.send) {
@@ -341,12 +271,59 @@ const SeasonList = ({
     }
   };
 
-  const handleStreamSelect = (stream) => setSelectedStreamUrl(stream.link);
+  const handleExternalPlayer = async (epLink, streamType) => {
+  setIsLoadingStreams(true);
+  let refererToken = null;
+  let autoRefererToken = null;
+  try {
+    // Try with global referer first
+    if (ipcRenderer.invoke) {
+      refererToken = await ipcRenderer.invoke('set-global-referer', epLink);
+    }
+    let streams = await providerManager.getStream({ link: epLink, type: streamType, providerValue });
+
+    if (!streams || streams.length === 0) {
+      // Retry with auto-referer
+      if (ipcRenderer.invoke) {
+        await ipcRenderer.invoke('clear-global-referer', refererToken);
+        autoRefererToken = await ipcRenderer.invoke('enable-auto-referer');
+      }
+      streams = await providerManager.getStream({ link: epLink, type: streamType, providerValue });
+    }
+
+    if (!streams || streams.length === 0) return alert('No stream available.');
+
+    if (defaultExternalPlayer && streams.length === 1) {
+      launchWithPlayer(defaultExternalPlayer, streams[0].link);
+      return;
+    }
+
+    setExternalPlayerStreams([...streams]);
+    setShowServerModal(true);
+  } catch (err) {
+    console.error('Stream fetch error:', err);
+    alert('Failed to extract streams.');
+  } finally {
+    setIsLoadingStreams(false);
+    if (refererToken && ipcRenderer.invoke) {
+      await ipcRenderer.invoke('clear-global-referer', refererToken);
+    }
+    if (autoRefererToken && ipcRenderer.invoke) {
+      await ipcRenderer.invoke('disable-auto-referer', autoRefererToken);
+    }
+  }
+};
+
+  const handleStreamSelect = (stream) => {
+    if (defaultExternalPlayer) {
+      launchWithPlayer(defaultExternalPlayer, stream.link);
+    } else {
+      setSelectedStreamUrl(stream.link);
+    }
+  };
 
   /* ── Play handler ───────────────────────────────────────────────────── */
-  const playHandler = async ({
-    linkIndex, playType, primaryTitle, secondaryTitle, seasonTitle, episodeData,
-  }) => {
+  const playHandler = async ({ linkIndex, playType, primaryTitle, secondaryTitle, seasonTitle, episodeData }) => {
     const episodeObj = episodeData[linkIndex];
     const episodeLink = getEpisodeLink(episodeObj);
     if (!episodeLink) {
@@ -407,57 +384,38 @@ const SeasonList = ({
     }
   };
 
-  /* ── Download progress callbacks (called by DownloadBottomSheet) ─────── */
-  const handleDownloadProgress = useCallback(
-    (fileName, progress, jobId) => {
-      updateDownload(fileName, { progress, jobId, status: 'downloading' });
-    },
-    [updateDownload]
-  );
+  /* ── Download progress callbacks ────────────────────────────────────── */
+  const handleDownloadProgress = useCallback((fileName, progress, jobId) => {
+    updateDownload(fileName, { progress, jobId, status: 'downloading' });
+  }, [updateDownload]);
 
-  const handleDownloadComplete = useCallback(
-    (fileName) => {
-      updateDownload(fileName, { progress: 100, status: 'completed', jobId: null });
-      markAsDownloaded(fileName);
-    },
-    [updateDownload, markAsDownloaded]
-  );
+  const handleDownloadComplete = useCallback((fileName) => {
+    updateDownload(fileName, { progress: 100, status: 'completed', jobId: null });
+    markAsDownloaded(fileName);
+  }, [updateDownload, markAsDownloaded]);
 
-  const handleDownloadError = useCallback(
-    (fileName) => {
-      updateDownload(fileName, { status: 'error', progress: 0, jobId: null });
-    },
-    [updateDownload]
-  );
+  const handleDownloadError = useCallback((fileName) => {
+    updateDownload(fileName, { status: 'error', progress: 0, jobId: null });
+  }, [updateDownload]);
 
-  /* ── Cancel download ────────────────────────────────────────────────── */
   const handleCancelDownload = async (fileName, jobId) => {
-  setCancelPopup(null);
-  if (jobId) {
-    try { 
-      await ipcRenderer.invoke('download:cancel', jobId);
-    } catch (_) {}
-  }
-  updateDownload(fileName, { progress: 0, jobId: null, status: 'idle' });
-};
+    setCancelPopup(null);
+    if (jobId) {
+      try { await ipcRenderer.invoke('download:cancel', jobId); } catch (_) {}
+    }
+    updateDownload(fileName, { progress: 0, jobId: null, status: 'idle' });
+  };
 
-  /* ── Episode-button long-press refs ─────────────────────────────────── */
+  /* ── Episode-button long-press ──────────────────────────────────────── */
   const epLongTimers = useRef({});
   const startEpLong = (fileName, jobId, title) => {
-    epLongTimers.current[fileName] = setTimeout(
-      () => setCancelPopup({ fileName, jobId, title }),
-      600
-    );
+    epLongTimers.current[fileName] = setTimeout(() => setCancelPopup({ fileName, jobId, title }), 600);
   };
   const clearEpLong = (fileName) => clearTimeout(epLongTimers.current[fileName]);
 
   /* ── Early exit ─────────────────────────────────────────────────────── */
   if (!LinkList || LinkList.length === 0) {
-    return (
-      <div style={{ padding: '32px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>
-        No streams available.
-      </div>
-    );
+    return <div style={{ padding: '32px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>No streams available.</div>;
   }
 
   const isMovie = type === 'movie' || type === 'Movie';
@@ -480,42 +438,14 @@ const SeasonList = ({
       <div style={{ padding: '14px 14px 10px', position: 'relative' }}>
         {LinkList.length > 1 ? (
           <>
-            <button
-              onClick={() => setDropOpen(!dropOpen)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '14px 18px', borderRadius: '12px', cursor: 'pointer',
-                background: 'transparent', border: `1.5px solid rgba(255,255,255,0.18)`,
-                color: primaryColor, fontSize: '15px', fontWeight: 700,
-              }}
-            >
+            <button onClick={() => setDropOpen(!dropOpen)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderRadius: '12px', cursor: 'pointer', background: 'transparent', border: '1.5px solid rgba(255,255,255,0.18)', color: primaryColor, fontSize: '15px', fontWeight: 700 }}>
               <span>{activeSeason?.title || `Season ${activeSeasonIndex + 1}`}</span>
-              <ChevronDown
-                size={18} color={primaryColor}
-                style={{ transform: dropOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-              />
+              <ChevronDown size={18} color={primaryColor} style={{ transform: dropOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
             </button>
             {dropOpen && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% - 4px)', left: '14px', right: '14px',
-                background: '#161616', border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: '12px', overflow: 'hidden', zIndex: 100,
-                boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
-              }}>
+              <div style={{ position: 'absolute', top: 'calc(100% - 4px)', left: '14px', right: '14px', background: '#161616', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '12px', overflow: 'hidden', zIndex: 100, boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
                 {LinkList.map((season, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSeasonChange(idx)}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left', padding: '12px 18px',
-                      fontSize: '14px',
-                      fontWeight: idx === activeSeasonIndex ? 700 : 500,
-                      color: idx === activeSeasonIndex ? primaryColor : '#d1d5db',
-                      background: idx === activeSeasonIndex ? primaryColor + '12' : 'transparent',
-                      border: 'none', cursor: 'pointer',
-                      borderBottom: idx < LinkList.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
-                    }}
-                  >
+                  <button key={idx} onClick={() => handleSeasonChange(idx)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '12px 18px', fontSize: '14px', fontWeight: idx === activeSeasonIndex ? 700 : 500, color: idx === activeSeasonIndex ? primaryColor : '#d1d5db', background: idx === activeSeasonIndex ? primaryColor + '12' : 'transparent', border: 'none', cursor: 'pointer', borderBottom: idx < LinkList.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
                     {season.title || `Season ${idx + 1}`}
                   </button>
                 ))}
@@ -523,11 +453,7 @@ const SeasonList = ({
             )}
           </>
         ) : (
-          <div style={{
-            padding: '14px 18px', borderRadius: '12px',
-            border: '1.5px solid rgba(255,255,255,0.18)',
-            color: primaryColor, fontSize: '15px', fontWeight: 700,
-          }}>
+          <div style={{ padding: '14px 18px', borderRadius: '12px', border: '1.5px solid rgba(255,255,255,0.18)', color: primaryColor, fontSize: '15px', fontWeight: 700 }}>
             {isMovie ? 'Movie' : (activeSeason?.title || 'Episodes')}
           </div>
         )}
@@ -544,92 +470,51 @@ const SeasonList = ({
             const isSingleLink = episodes.length === 1 && LinkList.length <= 1;
             const displayTitle = isMovie || isSingleLink ? 'Play' : getEpisodeTitle(item, index);
 
-            const episodeFileName = (metaTitle + (activeSeason?.title || '') + displayTitle)
-              .replace(/[^a-zA-Z0-9]/g, '_');
+            const episodeFileName = (metaTitle + (activeSeason?.title || '') + displayTitle).replace(/[^a-zA-Z0-9]/g, '_');
             const downloaded = isDownloaded(episodeFileName);
 
-            // Per-episode download state
             const dl = downloadMap[episodeFileName] ?? { progress: 0, jobId: null, status: 'idle' };
             const isDownloading = dl.status === 'downloading';
             const dlProgress = dl.progress || 0;
 
-            // SVG values for the play-button progress ring
             const R_play = 11;
             const C_play = 2 * Math.PI * R_play;
             const playOffset = C_play - (dlProgress / 100) * C_play;
 
             return (
-              <div
-                key={index}
-                style={{ display: 'flex', alignItems: 'center', gap: '12px', opacity: completed ? 0.5 : 1 }}
-              >
-                {/* ── Episode play button ─────────────────────────────── */}
+              <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '12px', opacity: completed ? 0.5 : 1 }}>
                 <button
                   className="ep-btn"
                   onClick={() => {
-                    if (isDownloading) return; // block play while downloading
-                    playHandler({
-                      linkIndex: index, playType: type, primaryTitle: metaTitle,
-                      secondaryTitle: displayTitle, seasonTitle: activeSeason?.title || '',
-                      episodeData: episodes,
-                    });
+                    if (isDownloading) return;
+                    playHandler({ linkIndex: index, playType: type, primaryTitle: metaTitle, secondaryTitle: displayTitle, seasonTitle: activeSeason?.title || '', episodeData: episodes });
                   }}
-                  /* Long-press while downloading shows cancel popup */
                   onMouseDown={() => isDownloading && startEpLong(episodeFileName, dl.jobId, displayTitle)}
                   onMouseUp={() => clearEpLong(episodeFileName)}
                   onMouseLeave={() => clearEpLong(episodeFileName)}
                   onTouchStart={() => isDownloading && startEpLong(episodeFileName, dl.jobId, displayTitle)}
                   onTouchEnd={() => clearEpLong(episodeFileName)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    if (isDownloading) setCancelPopup({ fileName: episodeFileName, jobId: dl.jobId, title: displayTitle });
-                  }}
+                  onContextMenu={(e) => { e.preventDefault(); if (isDownloading) setCancelPopup({ fileName: episodeFileName, jobId: dl.jobId, title: displayTitle }); }}
                   style={{
                     flex: 1, display: 'flex', alignItems: 'center', gap: '14px',
                     padding: '12px 16px', cursor: isDownloading ? 'default' : 'pointer',
-                    textAlign: 'left', border: 'none',
-                    position: 'relative', overflow: 'hidden', borderRadius: 12,
-                    /* Gradient sweep background while downloading */
+                    textAlign: 'left', border: 'none', position: 'relative', overflow: 'hidden', borderRadius: 12,
                     background: isDownloading
                       ? `linear-gradient(to right, ${primaryColor}30 ${dlProgress}%, rgba(255,255,255,0.04) ${dlProgress}%)`
                       : 'rgba(255,255,255,0.04)',
                   }}
                 >
-                  {/* Shimmer overlay while downloading */}
                   {isDownloading && (
-                    <div style={{
-                      position: 'absolute', top: 0, bottom: 0,
-                      left: '-50%', width: '35%',
-                      background: `linear-gradient(90deg, transparent, ${primaryColor}20, transparent)`,
-                      animation: 'shimmer 1.8s ease-in-out infinite',
-                      pointerEvents: 'none',
-                    }} />
+                    <div style={{ position: 'absolute', top: 0, bottom: 0, left: '-50%', width: '35%', background: `linear-gradient(90deg, transparent, ${primaryColor}20, transparent)`, animation: 'shimmer 1.8s ease-in-out infinite', pointerEvents: 'none' }} />
                   )}
-
-                  {/* ── Left icon: play / circular progress / completed ── */}
-                  <div style={{
-                    width: 28, height: 28, flexShrink: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    position: 'relative',
-                  }}>
+                  <div style={{ width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                     {completed ? (
                       <CheckCircle2 size={22} color={primaryColor} />
                     ) : isDownloading ? (
-                      /* Circular progress ring with play icon inside */
                       <>
                         <svg width="28" height="28" viewBox="0 0 28 28" style={{ position: 'absolute', inset: 0 }}>
-                          {/* Track */}
                           <circle cx="14" cy="14" r={R_play} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2" />
-                          {/* Progress */}
-                          <circle
-                            cx="14" cy="14" r={R_play} fill="none"
-                            stroke={primaryColor} strokeWidth="2"
-                            strokeDasharray={C_play}
-                            strokeDashoffset={playOffset}
-                            strokeLinecap="round"
-                            transform="rotate(-90 14 14)"
-                            style={{ transition: 'stroke-dashoffset 0.35s ease' }}
-                          />
+                          <circle cx="14" cy="14" r={R_play} fill="none" stroke={primaryColor} strokeWidth="2" strokeDasharray={C_play} strokeDashoffset={playOffset} strokeLinecap="round" transform="rotate(-90 14 14)" style={{ transition: 'stroke-dashoffset 0.35s ease' }} />
                         </svg>
                         <Play size={10} color={primaryColor} fill={primaryColor} style={{ position: 'relative', zIndex: 1 }} />
                       </>
@@ -637,61 +522,19 @@ const SeasonList = ({
                       <Play size={22} color={primaryColor} fill={primaryColor} />
                     )}
                   </div>
-
-                  {/* ── Title + progress label ── */}
                   <div style={{ flex: 1, overflow: 'hidden' }}>
-                    <span style={{
-                      fontSize: '14px', fontWeight: 500, color: '#e5e7eb',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      display: 'block',
-                    }}>
-                      {displayTitle}
-                    </span>
-                    {isDownloading && (
-                      <span style={{
-                        fontSize: '11px', color: primaryColor,
-                        fontWeight: 600, letterSpacing: '0.02em',
-                      }}>
-                        Downloading {Math.round(dlProgress)}%
-                      </span>
-                    )}
+                    <span style={{ fontSize: '14px', fontWeight: 500, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{displayTitle}</span>
+                    {isDownloading && <span style={{ fontSize: '11px', color: primaryColor, fontWeight: 600, letterSpacing: '0.02em' }}>Downloading {Math.round(dlProgress)}%</span>}
                   </div>
                 </button>
-
-                {/* ── Download / Delete button ─────────────────────────── */}
                 {episodeLink && (
                   <div style={{ flexShrink: 0 }}>
                     {downloaded ? (
-                      <button
-                        onClick={() => handleDeleteDownload(episodeFileName)}
-                        title="Delete downloaded file"
-                        style={{
-                          width: 40, height: 40, borderRadius: 10,
-                          background: 'rgba(255,255,255,0.07)',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          border: 'none', cursor: 'pointer', transition: 'background 0.15s',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.13)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
-                      >
+                      <button onClick={() => handleDeleteDownload(episodeFileName)} title="Delete downloaded file" style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', transition: 'background 0.15s' }} onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'} onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
                         <Trash2 size={18} color="#ef4444" />
                       </button>
                     ) : (
-                      <CircularDlBtn
-                        progress={dlProgress}
-                        isDownloading={isDownloading}
-                        primaryColor={primaryColor}
-                        onPress={() => {
-                          if (isDownloading) return;
-                          setSelectedEpisode({ link: episodeLink, title: displayTitle, fileName: episodeFileName });
-                          setShowDownloadSheet(true);
-                        }}
-                        onLongPress={() => {
-                          if (isDownloading) {
-                            setCancelPopup({ fileName: episodeFileName, jobId: dl.jobId, title: displayTitle });
-                          }
-                        }}
-                      />
+                      <CircularDlBtn progress={dlProgress} isDownloading={isDownloading} primaryColor={primaryColor} onPress={() => { if (isDownloading) return; setSelectedEpisode({ link: episodeLink, title: displayTitle, fileName: episodeFileName }); setShowDownloadSheet(true); }} onLongPress={() => { if (isDownloading) setCancelPopup({ fileName: episodeFileName, jobId: dl.jobId, title: displayTitle }); }} />
                     )}
                   </div>
                 )}
@@ -707,22 +550,67 @@ const SeasonList = ({
 
       {/* ── External streams & players modal ─────────────────────────── */}
       {showServerModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200,
-          background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
-        }}>
-          <div style={{
-            background: '#111', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '20px', padding: '20px', width: '100%', maxWidth: '450px',
-            maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
-          }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 700, color: '#fff', textAlign: 'center' }}>
-              Play with External Player
-            </h3>
-            <p style={{ margin: '0 0 16px', fontSize: '12px', color: '#9ca3af', textAlign: 'center' }}>
-              Select a stream server, then choose an external player
-            </p>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '20px', padding: '20px', width: '100%', maxWidth: '500px', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 700, color: '#fff', textAlign: 'center' }}>Play with External Player</h3>
+
+            {/* ── Default Player Selection / Search ───────────────────── */}
+            <div style={{ marginBottom: 16, padding: '12px', background: 'rgba(255,255,255,0.04)', borderRadius: 12 }}>
+              <div style={{ color: '#ccc', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>🔧 Default Player</div>
+              {defaultExternalPlayer ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#e5e7eb', fontSize: 14, fontWeight: 600 }}>{defaultExternalPlayer.name}</span>
+                  <button
+                    onClick={() => {
+                      setDefaultExternalPlayer(null);
+                      settingsStorage.removeItem('defaultExternalPlayer');
+                      setSearchResults([]);
+                      setSearchQuery('');
+                    }}
+                    style={{ background: 'transparent', border: `1px solid ${primaryColor}`, color: primaryColor, borderRadius: 8, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+                  >Change</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <input
+                      type="text"
+                      placeholder="Search app (e.g., PotPlayer)"
+                      value={searchQuery}
+                      onChange={(e) => handleSearch(e.target.value)}
+                      style={{
+                        flex: 1, padding: '8px 12px', borderRadius: 8,
+                        background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                        color: '#fff', fontSize: 13, outline: 'none'
+                      }}
+                    />
+                    {isSearching && <Loader2 size={16} color={primaryColor} style={{ animation: 'spin 1s linear infinite', alignSelf: 'center' }} />}
+                  </div>
+                  {searchResults.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {searchResults.map((player, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => handleSelectPlayer(player)}
+                          className="player-link"
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            padding: '10px 14px', borderRadius: 10,
+                            border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer',
+                          }}
+                        >
+                          <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: 14 }}>{player.name}</span>
+                          <ExternalLink size={16} color={primaryColor} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {searchQuery && searchResults.length === 0 && !isSearching && (
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>No matching app found. Try another name.</div>
+                  )}
+                </>
+              )}
+            </div>
 
             {isLoadingStreams ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', gap: '12px' }}>
@@ -731,10 +619,8 @@ const SeasonList = ({
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: '20px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#ccc', marginBottom: '8px' }}>
-                    📡 Stream Servers
-                  </div>
+                <div style={{ marginBottom: defaultExternalPlayer ? 0 : 20 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#ccc', marginBottom: '8px' }}>📡 Stream Servers</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {externalPlayerStreams.map((stream, idx) => (
                       <div
@@ -744,52 +630,27 @@ const SeasonList = ({
                         style={{
                           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                           padding: '12px 16px', borderRadius: '12px',
-                          border: selectedStreamUrl === stream.link
-                            ? `2px solid ${primaryColor}`
-                            : '1px solid rgba(255,255,255,0.08)',
+                          border: selectedStreamUrl === stream.link ? `2px solid ${primaryColor}` : '1px solid rgba(255,255,255,0.08)',
                           cursor: 'pointer', transition: 'all 0.15s',
                         }}
                       >
-                        <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: '14px', textTransform: 'capitalize' }}>
-                          {stream.server || `Server ${idx + 1}`}
-                        </span>
+                        <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: '14px', textTransform: 'capitalize' }}>{stream.server || `Server ${idx + 1}`}</span>
                         <MonitorPlay size={18} color={primaryColor} />
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {externalPlayers.length > 0 && selectedStreamUrl && (
+                {!defaultExternalPlayer && selectedStreamUrl && (
                   <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#ccc', marginBottom: '8px' }}>
-                      🎬 External Players
-                    </div>
+                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#ccc', marginBottom: '8px' }}>🎬 External Players</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div
-                        className="player-link"
-                        onClick={() => launchWithPlayer({ name: 'Bundled VLC', path: '', type: 'bundled-vlc' }, selectedStreamUrl)}
-                        style={{
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          padding: '12px 16px', borderRadius: '12px',
-                          border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer',
-                        }}
-                      >
-                        <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: '14px' }}>
-                          📀 Bundled VLC (built‑in)
-                        </span>
+                      <div className="player-link" onClick={() => launchWithPlayer({ name: 'Bundled VLC', path: '', type: 'bundled-vlc' }, selectedStreamUrl)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
+                        <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: '14px' }}>📀 Bundled VLC (built‑in)</span>
                         <ExternalLink size={16} color={primaryColor} />
                       </div>
                       {externalPlayers.map((player, idx) => (
-                        <div
-                          key={idx}
-                          className="player-link"
-                          onClick={() => launchWithPlayer(player, selectedStreamUrl)}
-                          style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            padding: '12px 16px', borderRadius: '12px',
-                            border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer',
-                          }}
-                        >
+                        <div key={idx} className="player-link" onClick={() => launchWithPlayer(player, selectedStreamUrl)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
                           <span style={{ color: '#e5e7eb', fontWeight: 600, fontSize: '14px' }}>{player.name}</span>
                           <ExternalLink size={16} color={primaryColor} />
                         </div>
@@ -798,30 +659,16 @@ const SeasonList = ({
                   </div>
                 )}
 
-                {selectedStreamUrl === null && (
-                  <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: '12px', marginTop: '12px' }}>
-                    Please select a stream server first
-                  </div>
+                {!defaultExternalPlayer && selectedStreamUrl === null && (
+                  <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: '12px', marginTop: '12px' }}>Please select a stream server first</div>
                 )}
               </>
             )}
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button
-                onClick={() => setShowServerModal(false)}
-                style={{
-                  flex: 1, padding: '10px 0', borderRadius: '10px',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  background: 'transparent', color: '#e5e7eb',
-                  fontSize: '14px', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
+              <button onClick={() => setShowServerModal(false)} style={{ flex: 1, padding: '10px 0', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#e5e7eb', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
             </div>
-            <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#6b7280', textAlign: 'center' }}>
-              Bundled VLC is included – other players are detected from your system.
-            </p>
+            <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#6b7280', textAlign: 'center' }}>Bundled VLC is included – other players are detected from your system.</p>
           </div>
         </div>
       )}
@@ -841,10 +688,7 @@ const SeasonList = ({
             setShowDownloadSheet(false);
             launchWithPlayer(player, streamUrl);
           }}
-          /* Progress callbacks – wired to SeasonList's download tracking */
-          onDownloadProgress={(progress, jobId) =>
-            handleDownloadProgress(selectedEpisode.fileName, progress, jobId)
-          }
+          onDownloadProgress={(progress, jobId) => handleDownloadProgress(selectedEpisode.fileName, progress, jobId)}
           onDownloadComplete={() => handleDownloadComplete(selectedEpisode.fileName)}
           onDownloadError={() => handleDownloadError(selectedEpisode.fileName)}
         />
